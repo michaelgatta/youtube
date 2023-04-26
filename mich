@@ -1,0 +1,171 @@
+provider "aws" {
+  region  = "us-east-1"
+  access_key = "AKIAXJNF366JYGQNDOQR"
+  secret_key = "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"
+}
+
+
+# creat visual private cloud (vpc)
+
+resource "aws_vpc" "info_tech_vpc" {
+  cidr_block = "10.0.0.0/16"
+}
+# create two sunbets (private and public subnet)
+
+resource "aws_subnet" "public-subnet" {
+  vpc_id     = aws_vpc.info_tech_vpc.id
+  cidr_block = "10.0.1.0/24"
+
+  tags = {
+    Name = "public-subnet"
+  }
+}
+
+
+resource "aws_subnet" "private-subnet" {
+  vpc_id     = aws_vpc.info_tech_vpc.id
+  cidr_block = "10.0.2.0/24"
+
+  tags = {
+    Name = "private-subnet"
+  }
+}
+
+
+# create security group
+
+resource "aws_security_group" "training-sg" {
+  name        = "training-sg"
+  description = "Allow TLS inbound traffic"
+  vpc_id      = aws_vpc.info_tech_vpc.id
+
+  ingress {
+    description      = "TLS from VPC"
+    from_port        = 22
+    to_port          = 22
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    
+  }
+
+  ingress {
+    description      = "TLS from VPC"
+    from_port        = 0    
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "training-sg"
+  }
+}
+# create internet gateway (IGW)
+
+resource "aws_internet_gateway" "info-tech-igw" {
+  vpc_id = aws_vpc.info_tech_vpc.id
+
+  tags = {
+    Name = "info-tech-igw"
+  }
+}
+# route table for public subnet
+
+resource "aws_route_table" "public-rt" {
+  vpc_id = aws_vpc.info_tech_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.info-tech-igw.id
+  }
+
+  tags = {
+    Name = "public-rt"
+  }
+}
+# route table association
+
+resource "aws_route_table_association" "public-asso" {
+  subnet_id      = aws_subnet.public-subnet.id
+  route_table_id = aws_route_table.public-rt.id
+}
+# create instance (web server) and connection 
+
+resource "aws_instance" "web-server" {
+  ami           = "ami-02396cdd13e9a1257" 
+  instance_type = "t2.micro"
+  key_name      =  "money"
+  subnet_id     = aws_subnet.public-subnet.id
+  vpc_security_group_ids = [aws_security_group.training-sg.id]
+
+  connection {
+    type = "ssh"
+    host = self.public-ip
+    user = ec2-user
+    private_key = file("./download/money")
+  }
+ 
+}
+resource "aws_eip" "my-eip" {
+  instance = aws_instance.web-server.id
+  vpc      = true
+}
+
+# create elastic ip and associate thesame with the websaver
+# now create instance for the db server just below on web server
+
+resource "aws_instance" "db-server" {
+  ami           = "ami-02396cdd13e9a1257" 
+  instance_type = "t2.micro"
+  key_name      =  "money"
+  subnet_id     = aws_subnet.private-subnet.id
+  vpc_security_group_ids = [aws_security_group.training-sg.id]
+
+  connection {
+    type = "ssh"
+    # host = self.public-ip
+    user = ec2-user
+    private_key = file("./download/money")
+  }
+ tags = {
+    Name = "db server"
+  }
+}
+resource "aws_eip" "my-eip-aws-natgw-id" {
+  vpc      = true
+}
+# create nat-gateway
+resource "aws_nat_gateway" "aws-natgw" {
+  allocation_id = aws_eip.my-eip-aws-natgw-id.id
+  subnet_id     = aws_subnet.public-subnet.id
+
+  tags = {
+    Name = "NAT"
+  }
+}
+# create nate table for nat gateway
+resource "aws_route_table" "private-rt" {
+  vpc_id     = aws_vpc.info_tech_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_nat_gateway.aws-natgw.id
+  }
+
+
+  tags = {
+    Name = "natgw-rt"
+  }
+}
+  resource "aws_route_table_association" "private-rt" {
+  subnet_id      = aws_subnet.private-subnet.id
+  route_table_id = aws_route_table.private-rt.id
+}
